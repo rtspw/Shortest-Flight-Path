@@ -10,9 +10,9 @@ using namespace std;
 
 struct edge {
     int destId;
-    int distance;
+    int carrierId;
+    double distance;
     string airportCode;
-    string carrierId;
     string carrierName;
 };
 
@@ -29,9 +29,10 @@ struct node {
 ///
 vector<string> parseCSVLine(const string &line);
 void writeCSVToXML(const string &airportFile, const string &airlineFile, const string &routeFile, const string &outputFile);
-unordered_map<int, string> makeIdToNameMap(const string &airlineFile);
-unordered_map<int, vector<edge>> makeRouteMap(const string &routeFile, const unordered_map<int, string> &nameMap);
-map<int, node> makeAirportMap(const string &airportFile);
+void makeIdToNameMap(const string &airlineFile, unordered_map<int, string> &airlineNames);
+void makeRouteMap(const string &routeFile, unordered_map<int,vector<edge>> &routeMap,
+                  const unordered_map<int, string> &nameMap, const map<int, node> &airportMap);
+void makeAirportMap(const string &airportFile, map<int, node> &airportMap, unordered_map<string, int> &nameToIdMap);
 
 double toRadian(const double &degree);
 double getDistance(double latitude1, double longitude1, double latitude2, double longitude2);
@@ -47,13 +48,14 @@ void writeCSVToXML(const string &airportFile, const string &airlineFile, const s
 
     unordered_map<int, string> airlineNames;
     unordered_map<int, vector<edge>> routeMap;
+    unordered_map<string, int> nameToIdMap;
     map<int, node> airportMap;
 
     ofstream fout;
 
-    airlineNames = makeIdToNameMap(airlineFile);
-    airportMap = makeAirportMap(airportFile);
-    routeMap = makeRouteMap(routeFile, airlineNames);
+    makeIdToNameMap(airlineFile, airlineNames);
+    makeAirportMap(airportFile, airportMap, nameToIdMap);
+    makeRouteMap(routeFile, routeMap, airlineNames, airportMap);
 
     fout.open(outputFile.c_str());
     fout << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << endl;
@@ -68,10 +70,11 @@ void writeCSVToXML(const string &airportFile, const string &airlineFile, const s
         if (routeMap.count(elem.first) != 0) {
             for(size_t i = 0 ; i < routeMap.at(elem.first).size(); ++i) {
                 fout << "\t\t<edge>" << endl;
-                fout << "\t\t\t<airport>" << routeMap[elem.first][i].destId << "</airport>" << endl;
+                fout << "\t\t\t<airportID>" << routeMap[elem.first][i].destId << "</airportID>" << endl;
                 fout << "\t\t\t<airportCode>" << routeMap[elem.first][i].airportCode << "</airportCode>" << endl;
                 fout << "\t\t\t<carrierID>" << routeMap[elem.first][i].carrierId << "</carrierID>" << endl;
                 fout << "\t\t\t<carrierName>" << routeMap[elem.first][i].carrierName << "</carrierName>" << endl;
+                fout << "\t\t\t<distance>" << routeMap[elem.first][i].distance << "</distance>" << endl;
                 fout << "\t\t</edge>" << endl;
             }
         }
@@ -80,10 +83,9 @@ void writeCSVToXML(const string &airportFile, const string &airlineFile, const s
     }
 }
 
-map<int, node> makeAirportMap(const string &airportFile) {
+void makeAirportMap(const string &airportFile, map<int, node> &airportMap, unordered_map<string, int> &nameToIdMap) {
     ifstream infile(airportFile.c_str());
     string line;
-    map<int, node> temp;
 
     // Seperates each line into vectors, and puts needed values in map
     while(getline(infile, line)) {
@@ -95,54 +97,79 @@ map<int, node> makeAirportMap(const string &airportFile) {
         airport.code = lines[4];
         airport.name = lines[1];
         airport.city = lines[2];
-        temp.insert(pair<int, node>(airport.id, airport));
+        airportMap.insert(pair<int, node>(airport.id, airport));
+        nameToIdMap.insert(pair<string, int>(airport.code, airport.id));
     }
-
-    return temp;
+    infile.close();
 }
 
 // Generates an unordered map with (airline id, airline name) pairs
 // This is for easy dictionary lookup when writing out to xml
-unordered_map<int, string> makeIdToNameMap(const string &airlineFile) {
+void makeIdToNameMap(const string &airlineFile, unordered_map<int, string> &airlineNames) {
     ifstream infile(airlineFile.c_str());
     string line;
-    unordered_map<int, string> temp;
 
     // Seperates each line into vectors, and puts needed values in map
     while(getline(infile, line)) {
         vector<string> lines = parseCSVLine(line);
-        temp.insert(pair<int, string>(atoi(lines[0].c_str()), lines[1]));
+        airlineNames.insert(pair<int, string>(atoi(lines[0].c_str()), lines[1]));
     }
-    return temp;
+    infile.close();
 }
 
 // Generates hash table with Airport ID as the key and vector of all connected flights (edges) as the value
-unordered_map<int, vector<edge>> makeRouteMap(const string &routeFile, const unordered_map<int, string> &nameMap) {
+void makeRouteMap(const string &routeFile, unordered_map<int, vector<edge> > &routeMap, const unordered_map<int, string> &nameMap,
+                                              const map<int, node> &airportMap) {
     ifstream infile(routeFile.c_str());
     string line;
-    unordered_map<int, vector<edge>> temp;
+
+    enum routeCSVMeanings {
+        CARRIER_CODE,
+        CARRIER_ID,
+        SOURCE_AIRPORT_IATA,
+        SOURCE_AIRPORT_ID,
+        DESTINATION_AIRPORT_IATA,
+        DESTINATION_AIRPORT_ID
+    };
 
     // Seperates each line into vectors, and puts needed values in map
     while(getline(infile, line)) {
         vector<string> lines = parseCSVLine(line);
 
-        // Adds new hash entry if previous does not exist
-        if(temp.count(3) == 0) {
-            temp.insert(pair<int, vector<edge>>(atoi(lines[3].c_str()), vector<edge>()));
-        }
+        int sourceId = atoi(lines[SOURCE_AIRPORT_ID].c_str());
+        int destinationId = atoi(lines[DESTINATION_AIRPORT_ID].c_str());
 
-        edge route;
+        // Adds entry to routeMap if both source and destination exists
+        if(airportMap.count(sourceId) && airportMap.count(destinationId)) {
+            edge route;
 
-        // Checks if airport exists (if id != /n)
-        if(!nameMap.count(atoi(lines[1].c_str())) == 0) {
-            route.destId = atoi(lines[5].c_str());
-            route.airportCode = lines[4];
-            route.carrierId = lines[1];
-            route.carrierName = nameMap.at(atoi(lines[1].c_str()));
-            temp[atoi(lines[3].c_str())].push_back(route);
+            // Adds new hash entry if previous does not exist
+            if(!routeMap.count(sourceId)) {
+                routeMap.insert(pair<int, vector<edge>>(sourceId, vector<edge>()));
+            }
+
+            route.destId = destinationId;
+            route.airportCode = lines[DESTINATION_AIRPORT_IATA];
+            route.carrierId = atoi(lines[CARRIER_ID].c_str());
+
+            // Checks if airport exists (if id != /n)
+            if(nameMap.count(route.carrierId))
+                route.carrierName = nameMap.at(route.carrierId);
+            else
+                route.carrierName = "Unknown Carrier";
+
+            // Calculates distance using lat and longitudes of source and destination
+            double sourceLat = airportMap.at(sourceId).latitude;
+            double sourceLon = airportMap.at(sourceId).longitude;
+            double destLat = airportMap.at(destinationId).latitude;
+            double destLon = airportMap.at(destinationId).longitude;
+            route.distance = getDistance(sourceLat, sourceLon, destLat, destLon);
+
+            // Pushes new route into route vector
+            routeMap[sourceId].push_back(route);
         }
     }
-    return temp;
+    infile.close();
 }
 
 // Takes single CSV line and seperates values in vector
