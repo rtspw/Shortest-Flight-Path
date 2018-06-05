@@ -32,6 +32,14 @@ enum routeCSVMeanings {
     DESTINATION_AIRPORT_ID
 };
 
+enum CONTROLLER_ERRORS {
+    START_NOT_FOUND,
+    END_NOT_FOUND,
+    START_END_SAME,
+    NO_ROUTE_FOUND,
+    INVALID_FILENAME
+};
+
 struct edge {
     int destId;
     int sourceId;
@@ -59,6 +67,7 @@ struct node {
     std::string city;
 };
 
+
 class Controller {
 
 public:
@@ -69,7 +78,8 @@ public:
     Controller &operator=(const Controller &other);
 
     void writeCSVToXML(const std::string &outputFile);
-    std::vector<edge> getShortestPath(const std::string start, const std::string end);
+    std::vector<std::string> getShortestPath(const std::string &start, const std::string &end);
+    std::vector<edge> findEdgesBetweenNodes(const int &aId, const int &bId);
 
 
 private:
@@ -83,11 +93,12 @@ private:
     std::unordered_map<std::string, int> nameToIdMap;
     std::map<int, node> airportMap;
 
-    void constructMaps();
 
+    void constructMaps();
     void makeIdToNameMap();
     void makeRouteMap();
     void makeAirportMap();
+    void makeItinerary(std::deque<int> &path, std::vector<std::string> &itinerary);
     double toRadian(const double &degree);
     double getDistance(double latitude1, double longitude1, double latitude2, double longitude2);
 

@@ -42,18 +42,16 @@ void Controller::constructMaps() {
 // to find the shortest path using avaliable flights between airports.
 // Returns a deque containing airport id's in the path, which should be traversed
 // from front to back to be in order
-std::vector<edge> Controller::getShortestPath(const std::string start, const std::string end) {
+std::vector<std::string> Controller::getShortestPath(const std::string &start, const std::string &end) {
 
+    if(!nameToIdMap.count(start))
+        throw START_NOT_FOUND;
 
-    if(!nameToIdMap.count(start)) {
-        // TO DO: THROW AN ERROR
-    }
-    if(!nameToIdMap.count(end)) {
-        // TO DO: THROW OTHER ERROR
-    }
-    if(start == end) {
-        // TO DO: THROW OTHER OTHER ERROR
-    }
+    if(!nameToIdMap.count(end))
+        throw END_NOT_FOUND;
+
+    if(start == end)
+        throw START_END_SAME;
 
     int startId = nameToIdMap[start];
     int endId = nameToIdMap[end];
@@ -66,6 +64,7 @@ std::vector<edge> Controller::getShortestPath(const std::string start, const std
     vector<edge> connectingEdges = routeMap[startId];
     processed.insert(startId);
 
+    // Starts initial case of shortest path algorithm
     for(size_t i = 0; i < connectingEdges.size(); ++i) {
         pq.push(pair<double, edge>(-1 * connectingEdges[i].distance, connectingEdges[i]));
     }
@@ -73,6 +72,7 @@ std::vector<edge> Controller::getShortestPath(const std::string start, const std
     int nextId = -1;
     double nextDistance;
 
+    // Loops through until shortest path found or no possible route
     while(!pq.empty() && nextId != endId) {
 
         nextDistance = pq.top().first;
@@ -90,10 +90,12 @@ std::vector<edge> Controller::getShortestPath(const std::string start, const std
         }
     }
 
-    if(pq.empty() && nextId != endId) {
-        cout << "asdf" << endl;
-    }
+    // Throws error if no possible routes between airports
+    // due to closed airports or private/non-commercial airports
+    if(pq.empty() && nextId != endId)
+        throw NO_ROUTE_FOUND;
 
+    // Puts resulting path by traversing parents in deque to ease reversing results
     deque<int> path;
     int parent = endId;
     while(parent != startId) {
@@ -101,22 +103,19 @@ std::vector<edge> Controller::getShortestPath(const std::string start, const std
         parent = parentOfId[parent];
     }
     path.push_front(parent);
-    for(size_t i = 0; i < path.size(); ++i) {
-        cout << "Node: " << airportMap[ path[i] ].code << " (" << airportMap[path[i]].name << ")" << endl;
-    }
-    return std::vector<edge>();
+
+    // Creates the string itinerary to be returned
+    vector<string> itinerary;
+    makeItinerary(path, itinerary);
+    return itinerary;
 }
 
 // Takes an output file name and generates an XML file
 // containing all verticies (airports) and edges (routes)
 void Controller::writeCSVToXML(const string &outputFile) {
 
-    if(outputFile.length() < 5 || outputFile.substr(outputFile.length() - 4) != ".xml") {
-        cout << "ERROR WITH FILENAME" << endl;
-        //cout << outputFile.substr(outputFile.length() - 4) << endl;
-        // TO DO : Throw an error
-        return;
-    }
+    if(outputFile.length() < 5 || outputFile.substr(outputFile.length() - 4) != ".xml")
+        throw INVALID_FILENAME;
 
     ofstream fout;
     fout.open(outputFile.c_str());
@@ -143,6 +142,19 @@ void Controller::writeCSVToXML(const string &outputFile) {
         fout << "\t</edges>" << endl;
         fout << "</vertex>" << endl;
     }
+}
+
+// Finds all edges (airlines) between two certain nodes (airports)
+// Warning: Does not check for existance in map so must already be validated
+std::vector<edge> Controller::findEdgesBetweenNodes(const int &aId, const int &bId) {
+    std::vector<edge> allConnectingEdges = routeMap[aId];
+    std::vector<edge> correspondingEdges;
+    for(size_t i = 0; i < allConnectingEdges.size(); ++i) {
+        if(allConnectingEdges[i].destId == bId) {
+            correspondingEdges.push_back(allConnectingEdges[i]);
+        }
+    }
+    return correspondingEdges;
 }
 
 // Generates a hash table where key: (airline id) and value: (airline name)
@@ -229,6 +241,47 @@ void Controller::makeAirportMap() {
     infile.close();
 }
 
+// Creates a vector of string, with the directions/itinerary in order
+// For example: [0] : "Start from Starting Airport"
+// [1] : "Fly to Other Airport for x miles using\n
+//           - Airline 1
+//           - Airline 2...
+// [2] : Arrive at Ending Airport
+void Controller::makeItinerary(std::deque<int> &path, std::vector<std::string> &itinerary) {
+    string buildStr;
+    int previousCode = path.front();
+    buildStr = "Start from " + airportMap[previousCode].code + " (" + airportMap[previousCode].name + ")";
+    itinerary.push_back(buildStr);
+    path.pop_front();
+
+    // Creates text for all flights in between the start and end
+    // Input varies on whether there are multiple airlines or just one
+    while(path.size() != 0) {
+        vector<edge> connectingRoutes = findEdgesBetweenNodes(previousCode, path.front());
+        buildStr = "Fly to " + airportMap[path.front()].code + " (" + airportMap[path.front()].name
+                 + ") over " + to_string((int)connectingRoutes[0].distance) + " miles using";
+
+        // Either lists airlines or uses one
+        if(connectingRoutes.size() == 1) {
+            buildStr += " " + connectingRoutes[0].carrierName;
+        }
+        else {
+            buildStr += " one of the following:";
+            for(size_t i = 0; i < connectingRoutes.size(); ++i) {
+                buildStr += "\n  - " + connectingRoutes[i].carrierName;
+            }
+        }
+        itinerary.push_back(buildStr);
+        previousCode = path.front();
+
+        // Final arrival message when on the last entry
+        if(path.size() == 1) {
+            buildStr = "Arrive at " + airportMap[path.front()].code + " (" + airportMap[path.front()].name + ")";
+            itinerary.push_back(buildStr);
+        }
+        path.pop_front();
+    }
+}
 
 /// HELPER FUNCTIONS
 ///
